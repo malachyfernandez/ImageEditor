@@ -222,12 +222,21 @@ const SettingsModal = ({ settings, onSave, onClose }) => {
           <h3 className="font-semibold text-gray-300">AI Settings</h3>
           <label className="block p-2 bg-gray-700 rounded-md">
             <span>Gemini API Key</span>
-            <input type="password"
-              placeholder="Your Google AI API Key"
-              className="w-full bg-gray-800 border border-gray-600 rounded p-1 mt-1 text-white"
-              value={localSettings.apiKey}
-              onChange={(e) => handleSettingChange('apiKey', e.target.value)}
-            />
+            <div>
+              <input
+                type="password"
+                placeholder="Your Google AI API Key"
+                className={`w-full bg-gray-800 border rounded p-1 mt-1 text-white ${!localSettings.apiKey ? 'border-red-500' : 'border-gray-600'
+                  }`}
+                value={localSettings.apiKey}
+                onChange={(e) => handleSettingChange('apiKey', e.target.value)}
+              />
+              {!localSettings.apiKey && (
+                <p className="text-red-500 text-xs mt-1">
+                  Needed to use AI features
+                </p>
+              )}
+            </div>
           </label>
           <label className="block p-2 bg-gray-700 rounded-md">
             <span>Default AI Edit Feather (%)</span>
@@ -274,7 +283,7 @@ function App() {
       // Ensure all keys are present even if loading older settings
       return { ...defaultSettings, ...JSON.parse(savedSettingsJSON) };
     }
-    
+
     const oldApiKey = localStorage.getItem('geminiApiKey');
     if (oldApiKey) {
       return { ...defaultSettings, apiKey: oldApiKey };
@@ -754,7 +763,7 @@ function App() {
   // --- AI Edit Logic ---
   const handleAiEditClick = () => {
     if (!selectedLayer && selectedLayerId !== 'base') return;
-    
+
     if (settings.apiKey) {
       setIsAiPromptModalOpen(true);
     } else {
@@ -770,8 +779,8 @@ function App() {
     // Use the key directly from settings
     const currentApiKey = settings.apiKey;
     if (!currentApiKey) {
-        setToastMessage("API Key is missing. Please check Settings.");
-        return;
+      setToastMessage("API Key is missing. Please check Settings.");
+      return;
     }
 
     setIsAiPromptModalOpen(false);
@@ -779,96 +788,96 @@ function App() {
     setToastMessage('Sending to AI...');
 
     try {
-        let imageBlob, mimeType = 'image/png';
+      let imageBlob, mimeType = 'image/png';
 
-        if (isBase) {
-            const res = await fetch(baseImage);
-            imageBlob = await res.blob();
-            mimeType = imageBlob.type;
-        } else {
-            imageBlob = await new Promise(resolve => {
-                const { img, scale, feather = 0 } = selectedLayer;
-                const canvas = document.createElement('canvas');
-                canvas.width = (img.width * scale) + (2 * feather);
-                canvas.height = (img.height * scale) + (2 * feather);
-                const ctx = canvas.getContext('2d');
-                drawLayer(ctx, { ...selectedLayer, x: feather, y: feather });
-                canvas.toBlob(resolve, 'image/png');
-            });
-        }
-
-        const base64ImageData = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result.split(',')[1]);
-            reader.onerror = reject;
-            reader.readAsDataURL(imageBlob);
+      if (isBase) {
+        const res = await fetch(baseImage);
+        imageBlob = await res.blob();
+        mimeType = imageBlob.type;
+      } else {
+        imageBlob = await new Promise(resolve => {
+          const { img, scale, feather = 0 } = selectedLayer;
+          const canvas = document.createElement('canvas');
+          canvas.width = (img.width * scale) + (2 * feather);
+          canvas.height = (img.height * scale) + (2 * feather);
+          const ctx = canvas.getContext('2d');
+          drawLayer(ctx, { ...selectedLayer, x: feather, y: feather });
+          canvas.toBlob(resolve, 'image/png');
         });
+      }
 
-        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${currentApiKey}`;
-        const requestBody = {
-            "contents": [{
-                "parts": [
-                    { "text": aiPrompt },
-                    { "inline_data": { "mime_type": mimeType, "data": base64ImageData } }
-                ]
-            }]
+      const base64ImageData = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(imageBlob);
+      });
+
+      const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${currentApiKey}`;
+      const requestBody = {
+        "contents": [{
+          "parts": [
+            { "text": aiPrompt },
+            { "inline_data": { "mime_type": mimeType, "data": base64ImageData } }
+          ]
+        }]
+      };
+
+      const response = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) });
+      const data = await response.json();
+
+      if (!response.ok) {
+        console.error("API Error Response:", data);
+        throw new Error(data?.error?.message || `HTTP Error: ${response.status}`);
+      }
+
+      if (!data.candidates || data.candidates.length === 0) {
+        if (data.promptFeedback && data.promptFeedback.blockReason) {
+          throw new Error(`Request blocked: ${data.promptFeedback.blockReason}`);
+        }
+        throw new Error('API returned no candidates in its response.');
+      }
+
+      const candidate = data.candidates[0];
+      if (candidate.finishReason && candidate.finishReason !== "STOP") {
+        throw new Error(`Generation failed. Reason: ${candidate.finishReason}`);
+      }
+      if (!candidate.content || !candidate.content.parts) {
+        throw new Error('Invalid response: No content parts found.');
+      }
+      const imagePart = candidate.content.parts.find(p => p.inlineData);
+      if (!imagePart) {
+        console.error("Invalid API Response:", data);
+        const textPart = candidate.content.parts.find(p => p.text);
+        throw new Error(textPart ? `AI returned text: "${textPart.text}"` : "AI did not return an image.");
+      }
+
+      const newImgDataUrl = `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
+      if (isBase) {
+        setState(prev => ({ ...prev, baseImage: newImgDataUrl }), { actionName: 'AI Edit Base Image' });
+      } else {
+        const newImg = new Image();
+        newImg.onload = () => {
+          const oldLayerHeight = selectedLayer.img.height * selectedLayer.scale;
+          const newScale = oldLayerHeight / newImg.naturalHeight;
+          // --- THIS CALCULATION IS FIXED ---
+          // The value is a percentage, so we divide by 100.
+          const newFeather = newImg.width * (settings.aiFeatherPercent / 1000);
+          updateLayer(selectedLayerId, {
+            imageSrc: newImgDataUrl, img: newImg, originalImageSrc: newImgDataUrl, originalImg: newImg,
+            scale: isNaN(newScale) ? 1 : newScale, feather: newFeather, featherStart: newFeather * 2.5,
+          }, { actionName: 'AI Edit Layer' });
         };
-
-        const response = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) });
-        const data = await response.json();
-
-        if (!response.ok) {
-            console.error("API Error Response:", data);
-            throw new Error(data?.error?.message || `HTTP Error: ${response.status}`);
-        }
-
-        if (!data.candidates || data.candidates.length === 0) {
-            if (data.promptFeedback && data.promptFeedback.blockReason) {
-                throw new Error(`Request blocked: ${data.promptFeedback.blockReason}`);
-            }
-            throw new Error('API returned no candidates in its response.');
-        }
-        
-        const candidate = data.candidates[0];
-        if (candidate.finishReason && candidate.finishReason !== "STOP") {
-            throw new Error(`Generation failed. Reason: ${candidate.finishReason}`);
-        }
-        if (!candidate.content || !candidate.content.parts) {
-            throw new Error('Invalid response: No content parts found.');
-        }
-        const imagePart = candidate.content.parts.find(p => p.inlineData);
-        if (!imagePart) {
-            console.error("Invalid API Response:", data);
-            const textPart = candidate.content.parts.find(p => p.text);
-            throw new Error(textPart ? `AI returned text: "${textPart.text}"` : "AI did not return an image.");
-        }
-        
-        const newImgDataUrl = `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
-        if (isBase) {
-            setState(prev => ({ ...prev, baseImage: newImgDataUrl }), { actionName: 'AI Edit Base Image' });
-        } else {
-            const newImg = new Image();
-            newImg.onload = () => {
-                const oldLayerHeight = selectedLayer.img.height * selectedLayer.scale;
-                const newScale = oldLayerHeight / newImg.naturalHeight;
-                // --- THIS CALCULATION IS FIXED ---
-                // The value is a percentage, so we divide by 100.
-                const newFeather = newImg.width * (settings.aiFeatherPercent / 100);
-                updateLayer(selectedLayerId, {
-                    imageSrc: newImgDataUrl, img: newImg, originalImageSrc: newImgDataUrl, originalImg: newImg,
-                    scale: isNaN(newScale) ? 1 : newScale, feather: newFeather, featherStart: newFeather * 2.5,
-                }, { actionName: 'AI Edit Layer' });
-            };
-            newImg.src = newImgDataUrl;
-        }
-        setToastMessage('AI edit successful! ✨');
+        newImg.src = newImgDataUrl;
+      }
+      setToastMessage('AI edit successful! ✨');
 
     } catch (error) {
-        console.error("Full AI Edit Error:", error);
-        setToastMessage(`AI Error: ${error.message}`);
+      console.error("Full AI Edit Error:", error);
+      setToastMessage(`AI Error: ${error.message}`);
     } finally {
-        setIsLoading(false);
-        setAiPrompt('');
+      setIsLoading(false);
+      setAiPrompt('');
     }
   };
 
@@ -887,7 +896,7 @@ function App() {
 
   // --- Global Listeners & Effects ---
   useEffect(() => { if (!baseImage) setIsModalOpen(true) }, [baseImage]);
-  
+
   // NEW: Effect to auto-focus the AI prompt input
   useEffect(() => {
     if (isAiPromptModalOpen) {
@@ -897,7 +906,7 @@ function App() {
       }, 100);
     }
   }, [isAiPromptModalOpen]);
-  
+
   useEffect(() => {
     const handleGlobalDrop = e => {
       e.preventDefault();
@@ -956,17 +965,17 @@ function App() {
 
       {isAiPromptModalOpen && (
         <Modal title="AI Image Edit" onClose={() => setIsAiPromptModalOpen(false)}>
-          <textarea 
+          <textarea
             ref={aiPromptInputRef}
-            value={aiPrompt} 
-            onChange={e => setAiPrompt(e.target.value)} 
+            value={aiPrompt}
+            onChange={e => setAiPrompt(e.target.value)}
             onKeyDown={handleAiPromptKeyDown}
-            placeholder="e.g., make the background a sunny beach" 
-            rows="3" 
+            placeholder="e.g., make the background a sunny beach"
+            rows="3"
             className="w-full bg-gray-700 border border-gray-600 rounded p-2 mb-4 text-white resize-none" />
-          <button 
-            onClick={executeAiEdit} 
-            disabled={!aiPrompt} 
+          <button
+            onClick={executeAiEdit}
+            disabled={!aiPrompt}
             className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 font-bold py-2 px-4 rounded flex items-center justify-center gap-2"
           >
             Generate <span className={keyHintClass}>Enter</span>

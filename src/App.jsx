@@ -247,6 +247,18 @@ const SettingsModal = ({ settings, onSave, onClose }) => {
               onChange={(e) => handleSettingChange('aiFeatherPercent', parseInt(e.target.value, 10))}
             />
           </label>
+          <label className="block p-2 bg-gray-700 rounded-md">
+            <span>AI Model</span>
+            <select
+              className="w-full bg-gray-800 border border-gray-600 rounded p-1 mt-1 text-white"
+              value={localSettings.aiModel}
+              onChange={(e) => handleSettingChange('aiModel', e.target.value)}
+            >
+              <option value="gemini-2.5-flash-image">Nano Banana (gemini-2.5-flash-image)</option>
+              <option value="gemini-3.1-flash-image-preview">Nano Banana 2 (gemini-3.1-flash-image-preview)</option>
+              <option value="gemini-3-pro-image-preview">Nano Banana Pro (gemini-3-pro-image-preview)</option>
+            </select>
+          </label>
         </div>
         <button onClick={handleSave} className="w-full bg-blue-600 hover:bg-blue-700 font-bold py-2 px-4 rounded mt-4">Save and Close</button>
       </div>
@@ -277,6 +289,7 @@ function App() {
       defaultMaskingOpen: true,
       apiKey: '',
       aiFeatherPercent: 5,
+      aiModel: 'gemini-2.5-flash-image',
     };
 
     if (savedSettingsJSON) {
@@ -306,6 +319,7 @@ function App() {
   const [activeEffect, setActiveEffect] = useState('brightness');
   const [isAiPromptModalOpen, setIsAiPromptModalOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
+  const [aiEditModel, setAiEditModel] = useState(settings.aiModel);
   const [draggedLayerId, setDraggedLayerId] = useState(null);
 
   // Function to save settings to state and localStorage
@@ -314,6 +328,7 @@ function App() {
     localStorage.setItem('photoEditorSettings', JSON.stringify(newSettings));
     setIsAdjustmentsOpen(newSettings.defaultAdjustmentsOpen);
     setIsMaskingOpen(newSettings.defaultMaskingOpen);
+    setAiEditModel(newSettings.aiModel);
     setToastMessage("Settings saved!");
   };
 
@@ -813,7 +828,8 @@ function App() {
         reader.readAsDataURL(imageBlob);
       });
 
-      const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${currentApiKey}`;
+      const modelName = aiEditModel || settings.aiModel || 'gemini-2.5-flash-image';
+      const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${currentApiKey}`;
       const requestBody = {
         "contents": [{
           "parts": [
@@ -973,6 +989,24 @@ function App() {
             placeholder="e.g., make the background a sunny beach"
             rows="3"
             className="w-full bg-gray-700 border border-gray-600 rounded p-2 mb-4 text-white resize-none" />
+          <div className="mb-4">
+            <label className="block text-xs text-gray-400 mb-1">Model</label>
+            <select
+              value={aiEditModel}
+              onChange={e => {
+                const newModel = e.target.value;
+                setAiEditModel(newModel);
+                const newSettings = { ...settings, aiModel: newModel };
+                setSettings(newSettings);
+                localStorage.setItem('photoEditorSettings', JSON.stringify(newSettings));
+              }}
+              className="w-full bg-gray-800 border border-gray-600 rounded p-1 text-white text-sm"
+            >
+              <option value="gemini-2.5-flash-image">Nano Banana (gemini-2.5-flash-image)</option>
+              <option value="gemini-3.1-flash-image-preview">Nano Banana 2 (gemini-3.1-flash-image-preview)</option>
+              <option value="gemini-3-pro-image-preview">Nano Banana Pro (gemini-3-pro-image-preview)</option>
+            </select>
+          </div>
           <button
             onClick={executeAiEdit}
             disabled={!aiPrompt}

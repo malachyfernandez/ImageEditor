@@ -1,3 +1,5 @@
+![AI Photo Editor](cover.jpg)
+
 # AI Photo Editor
 
 A powerful, browser-based, layer-driven photo editor built with React and enhanced with the generative capabilities of the Google Gemini API. This application provides a desktop-like editing experience in the browser, allowing for non-destructive editing through a layer-based workflow.

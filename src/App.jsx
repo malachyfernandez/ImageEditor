@@ -842,18 +842,13 @@ function App() {
       });
 
       const modelName = migrateModelId(aiEditModel || settings.aiModel);
-      const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+      const API_URL = 'https://openrouter.ai/api/v1/images';
       const requestBody = {
         model: modelName,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'text', text: aiPrompt },
-            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64ImageData}` } }
-          ]
-        }],
-        modalities: ['image', 'text'],
-        usage: { include: true },
+        prompt: aiPrompt,
+        input_references: [
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64ImageData}` } }
+        ],
       };
 
       const response = await fetch(API_URL, {
@@ -873,32 +868,13 @@ function App() {
         throw new Error(data?.error?.message || `HTTP Error: ${response.status}`);
       }
 
-      const choice = data.choices && data.choices[0];
-      const message = choice && choice.message;
-      if (!message) {
-        throw new Error('API returned no choices in its response.');
-      }
-      if (choice.finish_reason && choice.finish_reason !== 'stop') {
-        throw new Error(`Generation failed. Reason: ${choice.finish_reason}`);
+      const generated = data.data && data.data[0];
+      if (!generated || !generated.b64_json) {
+        console.error("Invalid API Response:", data);
+        throw new Error('AI did not return an image.');
       }
 
-      // OpenRouter returns generated images in message.images[].image_url.url
-      let newImgDataUrl = null;
-      const imageEntries = Array.isArray(message.images) ? message.images
-        : (Array.isArray(message.content) ? message.content.filter(p => p.type === 'image_url') : []);
-      const imageUrl = imageEntries.find(p => p.image_url?.url)?.image_url?.url;
-      if (imageUrl) {
-        newImgDataUrl = imageUrl.startsWith('data:') || imageUrl.startsWith('http')
-          ? imageUrl
-          : `data:image/png;base64,${imageUrl}`;
-      } else if (typeof message.content === 'string' && message.content.startsWith('data:image')) {
-        newImgDataUrl = message.content;
-      }
-      if (!newImgDataUrl) {
-        console.error("Invalid API Response:", data);
-        const text = typeof message.content === 'string' ? message.content : null;
-        throw new Error(text ? `AI returned text: "${text}"` : "AI did not return an image.");
-      }
+      const newImgDataUrl = `data:${generated.media_type || 'image/png'};base64,${generated.b64_json}`;
       if (isBase) {
         setState(prev => ({ ...prev, baseImage: newImgDataUrl }), { actionName: 'AI Edit Base Image' });
       } else {

@@ -2,7 +2,7 @@
 
 # AI Photo Editor
 
-A powerful, browser-based, layer-driven photo editor built with React and enhanced with the generative capabilities of the Google Gemini API. This application provides a desktop-like editing experience in the browser, allowing for non-destructive editing through a layer-based workflow.
+A powerful, browser-based, layer-driven photo editor built with React and enhanced with the generative capabilities of image-editing models via the OpenRouter API. This application provides a desktop-like editing experience in the browser, allowing for non-destructive editing through a layer-based workflow.
 
 **Live Application: [https://image-editor-five-beta.vercel.app/](https://image-editor-five-beta.vercel.app/)**
 
@@ -21,8 +21,9 @@ This project combines a robust set of standard photo editing tools with cutting-
   * **Cropping**: A simple and intuitive crop tool for trimming individual layers.
   * **HEIC Support**: Automatically converts and handles `.heic` and `.heif` image files from Apple devices.
 
-### 🤖 Gemini-Powered AI Editing
+### 🤖 AI-Powered Editing (OpenRouter)
 
+  * **Model Choice**: Pick between multiple image-editing models (Nano Banana 2.1, Nano Banana Pro, GPT-5.4 Image 2, and more), each with an estimated cost per generation shown from live OpenRouter pricing.
   * **In-painting and Out-painting**: Select any layer (or the base image) and use a simple text prompt to completely transform it.
   * **Creative Generation**: Change backgrounds, alter objects, modify styles, or generate entirely new elements within a layer. For example, select a layer with a person and prompt "make them wear a superhero costume."
   * **Smart Feathering**: AI-edited layers automatically have a subtle feather applied to help them blend more naturally into the composition.
@@ -30,7 +31,7 @@ This project combines a robust set of standard photo editing tools with cutting-
 ### User Experience
 
   * **Full Undo/Redo**: Complete history tracking allows you to step backward and forward through every action.
-  * **Persistent Settings**: Your Gemini API key and default panel layouts are saved in your browser's local storage.
+  * **Persistent Settings**: Your OpenRouter API key and default panel layouts are saved in your browser's local storage.
   * **Drag & Drop**: Add new images by simply dragging them onto the window from your desktop.
   * **Helpful UI**: Toast notifications provide feedback on actions, and a loading overlay indicates when the AI is working.
   * **Keyboard Shortcuts**: Boost your productivity with intuitive hotkeys for common actions.
@@ -46,7 +47,7 @@ This project combines a robust set of standard photo editing tools with cutting-
 5.  **Adjust**: Use the "Adjustments" and "Masking" panels in the sidebar to modify the selected layer.
 6.  **Transform**: Click and drag a layer on the canvas to move it. Drag the corner handles to scale it.
 7.  **Use AI Edit**:
-      * First, go to **Settings (⚙️ icon)** and enter your Google Gemini API key.
+      * First, go to **Settings (⚙️ icon)** and enter your OpenRouter API key.
       * Select a layer and click the **AI Edit** button.
       * Enter a prompt describing the change you want (e.g., "change the background to a snowy forest") and press **Generate**.
 8.  **Download**: Click "Download Image" to save the final composition as a PNG file, or use the "Download" button in the layer panel to save just the selected layer.
@@ -68,14 +69,14 @@ This project combines a robust set of standard photo editing tools with cutting-
 
 ## 🛠️ Setting Up the AI Features
 
-The AI editing capabilities are powered by the Google Gemini API. To use this feature, you need a free API key.
+The AI editing capabilities are powered by the OpenRouter API. To use this feature, you need an OpenRouter API key with credits.
 
-1.  Go to **[Google AI Studio](https://aistudio.google.com/)**.
-2.  Sign in with your Google account.
-3.  Click on **"Get API key"** and create a new key.
+1.  Go to **[OpenRouter](https://openrouter.ai/)**.
+2.  Sign in and add credits to your account.
+3.  Go to **Settings → Keys** and create a new API key (`sk-or-v1-...`).
 4.  Copy the generated API key.
 5.  In this application, click the **Settings (⚙️) icon** in the top right.
-6.  Paste your key into the "Gemini API Key" field and click **"Save and Close"**.
+6.  Paste your key into the "OpenRouter API Key" field and click **"Save and Close"**.
 
 Your key will be saved in your browser's local storage for future use.
 
@@ -117,6 +118,6 @@ The application will now be running on `http://localhost:5173` (or another port 
 
   * **Framework**: [React](https://react.dev/)
   * **Styling**: [Tailwind CSS](https://tailwindcss.com/)
-  * **AI Model**: [Google Gemini API](https://ai.google.dev/)
+  * **AI Models**: [OpenRouter](https://openrouter.ai/) (Nano Banana family, GPT Image family)
   * **HEIC Conversion**: [heic2any](https://github.com/alexcorvi/heic2any)
   * **Deployment**: [Vercel](https://vercel.com/)

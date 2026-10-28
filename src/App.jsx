@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import heic2any from 'heic2any';
+import { DEFAULT_AI_MODEL, migrateModelId, formatCost, useImageModelCosts, MODEL_OPTION_GROUPS } from './aiModels.js';
 
 // Define constants for interaction handles
 const HANDLE_SIZE = 12;
@@ -185,9 +186,23 @@ const CollapsibleSection = ({ title, isOpen, onToggle, children }) => {
   );
 };
 
+// Shared <optgroup> options for the AI model <select> dropdowns,
+// labelled with the estimated cost per generation.
+const ModelOptionGroups = ({ costs }) =>
+  MODEL_OPTION_GROUPS.map(({ group, options }) => (
+    <optgroup key={group} label={group}>
+      {options.map(m => (
+        <option key={m.id} value={m.id}>
+          {m.label} — ~{formatCost(costs?.[m.id])}/gen
+        </option>
+      ))}
+    </optgroup>
+  ));
+
 // NEW: Settings Modal Component
 const SettingsModal = ({ settings, onSave, onClose }) => {
   const [localSettings, setLocalSettings] = useState(settings);
+  const { costs: modelCosts, live: liveCosts } = useImageModelCosts();
 
   const handleSave = () => {
     onSave(localSettings);
@@ -221,11 +236,11 @@ const SettingsModal = ({ settings, onSave, onClose }) => {
         <div className="space-y-2">
           <h3 className="font-semibold text-gray-300">AI Settings</h3>
           <label className="block p-2 bg-gray-700 rounded-md">
-            <span>Gemini API Key</span>
+            <span>OpenRouter API Key</span>
             <div>
               <input
                 type="password"
-                placeholder="Your Google AI API Key"
+                placeholder="Your OpenRouter API Key (sk-or-v1-...)"
                 className={`w-full bg-gray-800 border rounded p-1 mt-1 text-white ${!localSettings.apiKey ? 'border-red-500' : 'border-gray-600'
                   }`}
                 value={localSettings.apiKey}
@@ -254,10 +269,11 @@ const SettingsModal = ({ settings, onSave, onClose }) => {
               value={localSettings.aiModel}
               onChange={(e) => handleSettingChange('aiModel', e.target.value)}
             >
-              <option value="gemini-2.5-flash-image">Nano Banana (gemini-2.5-flash-image)</option>
-              <option value="gemini-3.1-flash-image-preview">Nano Banana 2 (gemini-3.1-flash-image-preview)</option>
-              <option value="gemini-3-pro-image-preview">Nano Banana Pro (gemini-3-pro-image-preview)</option>
+              <ModelOptionGroups costs={modelCosts} />
             </select>
+            <span className="block text-xs text-gray-500 mt-1">
+              {liveCosts ? 'Est. cost per generation (live OpenRouter pricing)' : 'Est. cost per generation'}
+            </span>
           </label>
         </div>
         <button onClick={handleSave} className="w-full bg-blue-600 hover:bg-blue-700 font-bold py-2 px-4 rounded mt-4">Save and Close</button>
@@ -289,17 +305,13 @@ function App() {
       defaultMaskingOpen: true,
       apiKey: '',
       aiFeatherPercent: 5,
-      aiModel: 'gemini-2.5-flash-image',
+      aiModel: DEFAULT_AI_MODEL,
     };
 
     if (savedSettingsJSON) {
       // Ensure all keys are present even if loading older settings
-      return { ...defaultSettings, ...JSON.parse(savedSettingsJSON) };
-    }
-
-    const oldApiKey = localStorage.getItem('geminiApiKey');
-    if (oldApiKey) {
-      return { ...defaultSettings, apiKey: oldApiKey };
+      const parsed = JSON.parse(savedSettingsJSON);
+      return { ...defaultSettings, ...parsed, aiModel: migrateModelId(parsed.aiModel) };
     }
 
     return defaultSettings;
@@ -320,6 +332,7 @@ function App() {
   const [isAiPromptModalOpen, setIsAiPromptModalOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiEditModel, setAiEditModel] = useState(settings.aiModel);
+  const { costs: modelCosts } = useImageModelCosts();
   const [draggedLayerId, setDraggedLayerId] = useState(null);
 
   // Function to save settings to state and localStorage
@@ -783,7 +796,7 @@ function App() {
       setIsAiPromptModalOpen(true);
     } else {
       setIsSettingsModalOpen(true);
-      setToastMessage("Please set your Gemini API Key in Settings.");
+      setToastMessage("Please set your OpenRouter API Key in Settings.");
     }
   };
 
@@ -828,47 +841,64 @@ function App() {
         reader.readAsDataURL(imageBlob);
       });
 
-      const modelName = aiEditModel || settings.aiModel || 'gemini-2.5-flash-image';
-      const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${currentApiKey}`;
+      const modelName = migrateModelId(aiEditModel || settings.aiModel);
+      const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
       const requestBody = {
-        "contents": [{
-          "parts": [
-            { "text": aiPrompt },
-            { "inline_data": { "mime_type": mimeType, "data": base64ImageData } }
+        model: modelName,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: aiPrompt },
+            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64ImageData}` } }
           ]
-        }]
+        }],
+        modalities: ['image', 'text'],
+        usage: { include: true },
       };
 
-      const response = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) });
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${currentApiKey}`,
+          'HTTP-Referer': window.location.origin,
+          'X-Title': 'AI Photo Editor',
+        },
+        body: JSON.stringify(requestBody),
+      });
       const data = await response.json();
 
-      if (!response.ok) {
+      if (!response.ok || data.error) {
         console.error("API Error Response:", data);
         throw new Error(data?.error?.message || `HTTP Error: ${response.status}`);
       }
 
-      if (!data.candidates || data.candidates.length === 0) {
-        if (data.promptFeedback && data.promptFeedback.blockReason) {
-          throw new Error(`Request blocked: ${data.promptFeedback.blockReason}`);
-        }
-        throw new Error('API returned no candidates in its response.');
+      const choice = data.choices && data.choices[0];
+      const message = choice && choice.message;
+      if (!message) {
+        throw new Error('API returned no choices in its response.');
+      }
+      if (choice.finish_reason && choice.finish_reason !== 'stop') {
+        throw new Error(`Generation failed. Reason: ${choice.finish_reason}`);
       }
 
-      const candidate = data.candidates[0];
-      if (candidate.finishReason && candidate.finishReason !== "STOP") {
-        throw new Error(`Generation failed. Reason: ${candidate.finishReason}`);
+      // OpenRouter returns generated images in message.images[].image_url.url
+      let newImgDataUrl = null;
+      const imageEntries = Array.isArray(message.images) ? message.images
+        : (Array.isArray(message.content) ? message.content.filter(p => p.type === 'image_url') : []);
+      const imageUrl = imageEntries.find(p => p.image_url?.url)?.image_url?.url;
+      if (imageUrl) {
+        newImgDataUrl = imageUrl.startsWith('data:') || imageUrl.startsWith('http')
+          ? imageUrl
+          : `data:image/png;base64,${imageUrl}`;
+      } else if (typeof message.content === 'string' && message.content.startsWith('data:image')) {
+        newImgDataUrl = message.content;
       }
-      if (!candidate.content || !candidate.content.parts) {
-        throw new Error('Invalid response: No content parts found.');
-      }
-      const imagePart = candidate.content.parts.find(p => p.inlineData);
-      if (!imagePart) {
+      if (!newImgDataUrl) {
         console.error("Invalid API Response:", data);
-        const textPart = candidate.content.parts.find(p => p.text);
-        throw new Error(textPart ? `AI returned text: "${textPart.text}"` : "AI did not return an image.");
+        const text = typeof message.content === 'string' ? message.content : null;
+        throw new Error(text ? `AI returned text: "${text}"` : "AI did not return an image.");
       }
-
-      const newImgDataUrl = `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
       if (isBase) {
         setState(prev => ({ ...prev, baseImage: newImgDataUrl }), { actionName: 'AI Edit Base Image' });
       } else {
@@ -886,7 +916,8 @@ function App() {
         };
         newImg.src = newImgDataUrl;
       }
-      setToastMessage('AI edit successful! ✨');
+      const genCost = data.usage && data.usage.cost;
+      setToastMessage(`AI edit successful! ✨${genCost != null ? ` (${formatCost(genCost)})` : ''}`);
 
     } catch (error) {
       console.error("Full AI Edit Error:", error);
@@ -1002,9 +1033,7 @@ function App() {
               }}
               className="w-full bg-gray-800 border border-gray-600 rounded p-1 text-white text-sm"
             >
-              <option value="gemini-2.5-flash-image">Nano Banana (gemini-2.5-flash-image)</option>
-              <option value="gemini-3.1-flash-image-preview">Nano Banana 2 (gemini-3.1-flash-image-preview)</option>
-              <option value="gemini-3-pro-image-preview">Nano Banana Pro (gemini-3-pro-image-preview)</option>
+              <ModelOptionGroups costs={modelCosts} />
             </select>
           </div>
           <button

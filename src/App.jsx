@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import heic2any from 'heic2any';
-import { DEFAULT_AI_MODEL, migrateModelId, formatCost, useImageModelCosts, MODEL_OPTION_GROUPS } from './aiModels.js';
+import { DEFAULT_AI_MODEL, migrateModelId, formatCost, useImageModelCosts, MODEL_OPTION_GROUPS, nearestAspect, computeCropRect } from './aiModels.js';
 
 // Define constants for interaction handles
 const HANDLE_SIZE = 12;
@@ -199,6 +199,46 @@ const ModelOptionGroups = ({ costs }) =>
     </optgroup>
   ));
 
+// Draggable preview for positioning the crop applied to a model's output
+// when it returns a different aspect ratio than the layer being edited.
+const AiCropPicker = ({ outAspect, targetAspect, offset, onChange }) => {
+  const boxRef = useRef(null);
+  // Crop window as a fraction of the output image (largest rect of
+  // targetAspect that fits inside an outAspect-shaped output).
+  const cw = Math.min(1, targetAspect / outAspect);
+  const ch = Math.min(1, outAspect / targetAspect);
+
+  const setFromPointer = (e) => {
+    const rect = boxRef.current.getBoundingClientRect();
+    const fx = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    const fy = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
+    onChange({
+      x: cw >= 0.999 ? 0.5 : Math.min(1, Math.max(0, (fx - cw / 2) / (1 - cw))),
+      y: ch >= 0.999 ? 0.5 : Math.min(1, Math.max(0, (fy - ch / 2) / (1 - ch))),
+    });
+  };
+
+  return (
+    <div
+      ref={boxRef}
+      className="relative bg-gray-900 border border-gray-500 rounded cursor-crosshair select-none touch-none"
+      style={{ aspectRatio: String(outAspect), width: '100%', maxWidth: 220 }}
+      onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); setFromPointer(e); }}
+      onPointerMove={(e) => { if (e.buttons === 1) setFromPointer(e); }}
+    >
+      <div
+        className="absolute border-2 border-blue-400 bg-blue-400/25 pointer-events-none"
+        style={{
+          left: `${offset.x * (1 - cw) * 100}%`,
+          top: `${offset.y * (1 - ch) * 100}%`,
+          width: `${cw * 100}%`,
+          height: `${ch * 100}%`,
+        }}
+      />
+    </div>
+  );
+};
+
 // NEW: Settings Modal Component
 const SettingsModal = ({ settings, onSave, onClose }) => {
   const [localSettings, setLocalSettings] = useState(settings);
@@ -332,7 +372,8 @@ function App() {
   const [isAiPromptModalOpen, setIsAiPromptModalOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiEditModel, setAiEditModel] = useState(settings.aiModel);
-  const { costs: modelCosts } = useImageModelCosts();
+  const { costs: modelCosts, aspects: modelAspects } = useImageModelCosts();
+  const [aiCropOffset, setAiCropOffset] = useState({ x: 0.5, y: 0.5 });
   const [draggedLayerId, setDraggedLayerId] = useState(null);
 
   // Function to save settings to state and localStorage
@@ -429,25 +470,40 @@ function App() {
   };
 
   const applyCrop = useCallback(() => {
-    if (!cropBox || !selectedLayer || cropBox.width < 1 || cropBox.height < 1) {
+    if (!cropBox || !selectedLayer) {
       setIsCropping(false); setCropBox(null); return;
     }
     const { img, x: layerX, y: layerY, scale } = selectedLayer;
-    const cropX = (cropBox.x - layerX) / scale, cropY = (cropBox.y - layerY) / scale;
-    const cropW = cropBox.width / scale, cropH = cropBox.height / scale;
+    const layerW = img.width * scale, layerH = img.height * scale;
+
+    // Intersect the dragged box with the layer's actual bounds (canvas coords)
+    const ix = Math.max(cropBox.x, layerX), iy = Math.max(cropBox.y, layerY);
+    const ix2 = Math.min(cropBox.x + cropBox.width, layerX + layerW);
+    const iy2 = Math.min(cropBox.y + cropBox.height, layerY + layerH);
+    if (ix2 - ix < 1 || iy2 - iy < 1) {
+      setIsCropping(false); setCropBox(null); return;
+    }
+
+    // Convert the intersection into image-pixel space
+    const sx = (ix - layerX) / scale, sy = (iy - layerY) / scale;
+    const sw = (ix2 - ix) / scale, sh = (iy2 - iy) / scale;
 
     const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = cropW; tempCanvas.height = cropH;
+    tempCanvas.width = Math.max(1, Math.round(sw));
+    tempCanvas.height = Math.max(1, Math.round(sh));
     const tempCtx = tempCanvas.getContext('2d');
-    tempCtx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+    tempCtx.drawImage(img, sx, sy, sw, sh, 0, 0, tempCanvas.width, tempCanvas.height);
 
     const newImageDataUrl = tempCanvas.toDataURL('image/png');
     const newCroppedImage = new Image();
     newCroppedImage.onload = () => {
+      // Keep the same display scale so the cropped layer is exactly the
+      // size of the dragged box — resetting scale to 1 renders it
+      // 1/oldScale times too large.
       updateLayer(selectedLayer.id, {
         imageSrc: newImageDataUrl, img: newCroppedImage,
         originalImageSrc: newImageDataUrl, originalImg: newCroppedImage,
-        x: cropBox.x, y: cropBox.y, scale: 1, crop: null,
+        x: ix, y: iy, feather: 0, featherStart: 0, crop: null,
       }, { actionName: 'Crop Layer' });
       setIsCropping(false); setCropBox(null);
     };
@@ -793,6 +849,7 @@ function App() {
     if (!selectedLayer && selectedLayerId !== 'base') return;
 
     if (settings.apiKey) {
+      setAiCropOffset({ x: 0.5, y: 0.5 });
       setIsAiPromptModalOpen(true);
     } else {
       setIsSettingsModalOpen(true);
@@ -842,6 +899,12 @@ function App() {
       });
 
       const modelName = migrateModelId(aiEditModel || settings.aiModel);
+      const targetAspect = isBase
+        ? (visibleCanvasRef.current ? visibleCanvasRef.current.width / visibleCanvasRef.current.height : 1)
+        : selectedLayer.img.width / selectedLayer.img.height;
+      const modelRatios = (modelAspects && modelAspects[modelName]) || [];
+      const nearest = nearestAspect(modelRatios, targetAspect);
+
       const API_URL = 'https://openrouter.ai/api/v1/images';
       const requestBody = {
         model: modelName,
@@ -850,6 +913,10 @@ function App() {
           { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64ImageData}` } }
         ],
       };
+      // Pin the output to the target's aspect when the model supports it;
+      // otherwise let the provider auto-pick (usually preserves input).
+      if (nearest && nearest.matches) requestBody.aspect_ratio = nearest.ratio;
+      else if (modelRatios.includes('auto')) requestBody.aspect_ratio = 'auto';
 
       const response = await fetch(API_URL, {
         method: 'POST',
@@ -874,7 +941,25 @@ function App() {
         throw new Error('AI did not return an image.');
       }
 
-      const newImgDataUrl = `data:${generated.media_type || 'image/png'};base64,${generated.b64_json}`;
+      let newImgDataUrl = `data:${generated.media_type || 'image/png'};base64,${generated.b64_json}`;
+
+      // If the model returned a different aspect ratio than the target
+      // (fixed-aspect models like 1:1), crop it back at the chosen offset.
+      const outImg = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = () => reject(new Error('Failed to load generated image.'));
+        i.src = newImgDataUrl;
+      });
+      const outAspect = outImg.naturalWidth / outImg.naturalHeight;
+      if (Math.abs(outAspect - targetAspect) / targetAspect > 0.01) {
+        const r = computeCropRect(outImg.naturalWidth, outImg.naturalHeight, targetAspect, aiCropOffset);
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = Math.max(1, Math.round(r.w));
+        cropCanvas.height = Math.max(1, Math.round(r.h));
+        cropCanvas.getContext('2d').drawImage(outImg, r.x, r.y, r.w, r.h, 0, 0, cropCanvas.width, cropCanvas.height);
+        newImgDataUrl = cropCanvas.toDataURL('image/png');
+      }
       if (isBase) {
         setState(prev => ({ ...prev, baseImage: newImgDataUrl }), { actionName: 'AI Edit Base Image' });
       } else {
@@ -1012,6 +1097,28 @@ function App() {
               <ModelOptionGroups costs={modelCosts} />
             </select>
           </div>
+          {(() => {
+            const targetAspect = selectedLayerId === 'base'
+              ? (visibleCanvasRef.current ? visibleCanvasRef.current.width / visibleCanvasRef.current.height : 1)
+              : (selectedLayer ? selectedLayer.img.width / selectedLayer.img.height : 1);
+            const ratios = (modelAspects && modelAspects[migrateModelId(aiEditModel)]) || [];
+            const nearest = nearestAspect(ratios, targetAspect);
+            if (nearest && nearest.matches) return null;
+            return (
+              <div className="mb-4">
+                <label className="block text-xs text-gray-400 mb-1">
+                  Crop position — this model may return {nearest ? `~${nearest.ratio}` : 'a different aspect'};
+                  the result is cropped back to match {selectedLayerId === 'base' ? 'the image' : 'your layer'}.
+                </label>
+                <AiCropPicker
+                  outAspect={nearest ? nearest.value : 1}
+                  targetAspect={targetAspect}
+                  offset={aiCropOffset}
+                  onChange={setAiCropOffset}
+                />
+              </div>
+            );
+          })()}
           <button
             onClick={executeAiEdit}
             disabled={!aiPrompt}
